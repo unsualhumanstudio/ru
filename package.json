@@ -1,0 +1,42 @@
+{
+  "name": "ru-mcp",
+  "version": "0.2.0",
+  "description": "rū — a protocol for seeding and resolving context with AI agents via #tags",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "ru-mcp": "dist/setup.js",
+    "ru-mcp-server": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "setup": "node dist/setup.js",
+    "package-extension": "cd extension && zip -r ../ru-extension.zip . --exclude '*.DS_Store'"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "obsidian",
+    "claude",
+    "context",
+    "tags"
+  ],
+  "author": "Diana Angelica Valdes Contreras",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/unsualhumanstudio/ru.git"
+  },
+  "homepage": "https://github.com/unsualhumanstudio/ru#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^22.0.0"
+  }
+}
