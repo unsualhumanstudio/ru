@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "rū",
+  "version": "0.1.0",
+  "description": "Highlight text on any page and tag it into your rū vault.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://localhost:27125/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
