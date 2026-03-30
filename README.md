@@ -1,14 +1,20 @@
 # rū
 
-**A new interaction primitive for AI interfaces.**
+**An AI-native interaction primitive for context sharing.**
+
+Highlight context once. Call it into any AI conversation, anytime — with just `#`.
 
 ---
 
 ## The idea
 
-Chat interfaces are optimized for output — not for the thinking that happens while reading it. High-value sparks get buried in long-form histories, and the only workarounds are flow-breaking: screenshotting, copy-pasting, context-switching. Meanwhile, highlighting — the most natural gesture for annotating and thinking — is treated as a precursor to copy-paste and nothing more.
+Context doesn't travel across tools. It gets left behind.
 
-rū reclaims that gesture. `#folder/document` lets you capture a spark the moment it happens and call it into any conversation, without switching apps or reprompting from scratch. Private context stays local. Public context is published under a namespace you own and can be called by anyone.
+Users move between browsers, notes, documents, and AI conversations all day — but the context they've built up in one place never follows them to the next. The workarounds are manual, fragmented, and invisible to every other tool in the stack.
+
+rū introduces the `#` gesture as a deliberate interaction primitive — giving users explicit control over what context enters AI model conversations, making human agency visible at the interaction layer rather than delegating it to ambient memory.
+
+`#folder/document` lets you capture a spark the moment it happens and call it into any conversation, without switching apps or reprompting from scratch. Private context stays local. Public context is published under a namespace you own and can be called by anyone.
 
 ---
 
@@ -61,7 +67,7 @@ No cloud. No account required for private tags. Your context stays on your machi
 
 **Smart retrieval:** If a tag appears at the top of a note (page-level), rū fetches the full note. If it appears inline, rū returns just the surrounding snippet. You always get the right amount of context.
 
-**Keeper:** Create a `Keeper/` folder in your vault to define how rū resolves specific tags. `Keeper/default` applies globally. `Keeper/tasks` applies only when resolving `#tasks`. No config files — just seeds.
+**Keeper:** Create a `Keeper/` folder in your vault to define how rū resolves specific tags. `Keeper/default` applies globally. `Keeper/tasks` applies only when resolving `#tasks`. No config files — just notes.
 
 ---
 
@@ -136,9 +142,9 @@ Download the latest `.zip` from [ru-ivory.vercel.app](https://ru-ivory.vercel.ap
 
 ## Coming next
 
+- **rū Desktop** — a native app that replaces Obsidian as the local vault, making setup instant
 - **Namespace registry** — claim your namespace, publish and share context with anyone
 - **Keeper** — per-tag synthesis instructions that guide how Claude resolves your context
-- **rū Desktop** — a native app that replaces Obsidian as the local vault, making setup instant
 
 See [SPEC.md](./SPEC.md) for the full protocol specification.
 

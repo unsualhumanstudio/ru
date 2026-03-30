@@ -1,6 +1,6 @@
 # rū Protocol Specification
 
-**Version:** 0.2 (draft)
+**Version:** 0.2
 **Author:** Diana Angelica Valdes Contreras
 **Status:** Draft — open for comment
 
@@ -8,7 +8,7 @@
 
 ## Overview
 
-rū is a context protocol for AI agents. It defines a syntax for seeding personal knowledge and resolving it from any connected source — and a set of resolution rules that any compliant implementation must follow.
+rū is an AI-native interaction primitive for context sharing. It defines a syntax for seeding personal knowledge and resolving it from any connected source — and a set of resolution rules that any compliant implementation must follow.
 
 The protocol's core primitive:
 
@@ -49,9 +49,9 @@ The `#` primitive operates in two modes depending on whether a namespace suffix 
 
 **Public mode** (`#folder/document.namespace`)
 - Resolves from a remote context store belonging to the namespace owner
-- Requires the path to be claimed and marked public (or shared with the caller)
-- Network request to the rū registry to locate the resolver endpoint
-- If the namespace has not published that path, or has not made it accessible to the caller, returns empty
+- Requires the path to be claimed and marked public by the owner
+- Network request to the rū registry API to locate and return the context
+- If the namespace has not published that path, returns empty
 
 ### 1.3 Privacy tiers
 
@@ -71,48 +71,29 @@ Any path without a `.namespace` suffix is always private. There is no mechanism 
 
 ### 2.1 What a claim is
 
-A claim associates a namespace with an identity and declares which paths within that namespace are publicly accessible. Claims are stored in the rū registry. One person may own multiple namespaces.
+A claim associates a namespace with an authenticated identity and declares which paths within that namespace are publicly accessible. Claims are stored in the rū registry. One person may own multiple namespaces.
 
 ### 2.2 Registry
 
-The canonical rū registry lives at:
+The rū registry is a centralized Supabase instance hosted by unsualhumanstudio. It is required for global namespace resolution. Users do not need their own Supabase instance.
+
+Namespace claims and public seed resolution are handled via the rū API:
 
 ```
-github.com/unsualhumanstudio/ru-registry
+POST /namespaces/claim           → authenticated; registers a namespace
+GET  /namespaces/:namespace      → metadata, public paths, owner info
+GET  /resolve/:namespace/:path   → open if public; returns external_context
+POST /seed/:namespace/:path      → authenticated, owner-scoped only
 ```
 
-Each claimed namespace is a YAML file at `registry/<namespace>.yaml`.
-
-### 2.3 Claim file format
-
-```yaml
-namespace: yournamespace
-display_name: Your Name
-public_paths:
-  - rū/onboarding
-  - research/summary
-resolver: https://raw.githubusercontent.com/unsualhumanstudio/ru-registry/main/public/yournamespace/
-```
-
-| Field | Required | Description |
-|---|---|---|
-| `namespace` | Yes | Must match the filename. Lowercase alphanumeric and hyphens only. |
-| `display_name` | No | Human-readable name of the owner |
-| `public_paths` | Yes | List of paths this namespace has made public (e.g. `rū/onboarding`) |
-| `resolver` | Yes | URL where the resolver can fetch context for this namespace |
-
-### 2.4 How to claim
-
-Submit a PR to `github.com/unsualhumanstudio/ru-registry` adding your file at `registry/<namespace>.yaml`. PRs are reviewed for format validity only — namespace squatting and impersonation disputes are handled through the issue tracker.
-
-### 2.5 Namespace rules
+### 2.3 Namespace rules
 
 - Lowercase alphanumeric and hyphens
 - 3–32 characters
 - Must be unique in the registry
 - One person may own multiple namespaces (individuals, orgs, projects, personas)
 - Renaming a namespace is destructive — treat claimed namespaces as permanent
-- Namespaces are claimed on a first-come, first-served basis during this phase
+- Anonymous public namespaces are architecturally impossible — every claim requires authentication
 
 ---
 
@@ -138,11 +119,9 @@ A compliant resolver MUST handle two private path forms:
 
 A compliant resolver MUST:
 
-1. Query the rū registry to locate `registry/<namespace>.yaml`
-2. Verify that `folder/document` is listed under `public_paths`
-3. If not listed — return empty, do not error
-4. If listed — fetch context from the `resolver` endpoint
-5. Return the fetched content labeled as `external_context` (see Section 8)
+1. Query `GET /resolve/:namespace/:path` on the rū registry API
+2. If the path is not public or does not exist — return empty, do not error
+3. If found — return the content labeled as `external_context` (see Section 8)
 
 ### 3.3 Agent permission scoping
 
@@ -181,7 +160,7 @@ A context source MUST NOT be required to store content in any particular format.
 | Obsidian (via Local REST API) | Local note vault | Reference implementation |
 | Apple Notes | Local note app | Planned |
 | Granola AI | Meeting notes | Planned |
-| rū browser extension | Web highlights | Phase 4 |
+| rū browser extension | Web highlights | Available |
 
 ### 4.3 Adding a new source
 
@@ -238,7 +217,16 @@ Where a search engine retrieves raw matches, Keeper maintains a **living state**
 1. **Background synthesis** — when seeds change (new notes added, existing notes updated), Keeper re-synthesizes the living document for that path. Pre-computed, not generated at call time.
 2. **Contextual selection** — at call time, Keeper + the MCP resolver examine the current conversation and decide what to surface: the full folder synthesis, a specific document, a summary, or silence. Keeper never blindly dumps everything.
 
-### 7.2 Where Keeper runs
+### 7.2 Keeper instructions (current)
+
+Users can guide Keeper's synthesis by creating a `Keeper/` folder in their local vault:
+
+- `Keeper/default` — global instructions applied to all tag resolution
+- `Keeper/{tag}` — instructions applied only when resolving `#tag`
+
+No LLM API key required for this layer. Instructions are plain text written by the user and passed as context at resolution time.
+
+### 7.3 Where Keeper runs
 
 **Local Keeper (private paths):**
 - Runs inside the MCP server
@@ -259,7 +247,7 @@ Where a search engine retrieves raw matches, Keeper maintains a **living state**
 - Makes the final decision about what to surface
 - This is what makes rū feel intelligent rather than merely retrievable
 
-### 7.3 Canonical Keeper prompt
+### 7.4 Canonical Keeper prompt
 
 > "When I call #folder at the start of a session, you're not receiving a static document — you're receiving Keeper's synthesized understanding of where this project is right now, across all the decisions, patterns, and evolution that have happened. Treat it as institutional memory, not documentation. Don't ask me to re-explain things that are in the context. If something seems outdated or contradictory, flag it so I can update the seed."
 
