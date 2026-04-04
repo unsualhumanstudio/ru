@@ -1,12 +1,65 @@
 #!/usr/bin/env node
 import https from "node:https";
 import http from "node:http";
+import fs from "node:fs";
+import nodePath from "node:path";
+import os from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+
+// ── rū Desktop vault (~/Library/Application Support/rū/) ─────────────────────
+
+const RU_VAULT_PATH = nodePath.join(os.homedir(), "Library", "Application Support", "rū");
+const RU_VAULT_ENABLED = fs.existsSync(RU_VAULT_PATH);
+
+/** Search local vault for seeds whose tag contains the query string. */
+function searchLocalVault(tag: string): string {
+  if (!RU_VAULT_ENABLED) return "";
+  try {
+    const files = fs.readdirSync(RU_VAULT_PATH).filter(f => f.endsWith(".md"));
+    const matches: string[] = [];
+    for (const file of files) {
+      const fileTag = file.replace(/\.md$/, "").replace(/_/g, "/");
+      if (!fileTag.toLowerCase().includes(tag.toLowerCase())) continue;
+      const content = fs.readFileSync(nodePath.join(RU_VAULT_PATH, file), "utf8");
+      const lines = content.split("\n");
+      const body = lines.slice(2).join("\n").trim(); // skip "#tag\n\n" header
+      if (body) matches.push([`[rū] #${fileTag}`, "─".repeat(40), body].join("\n"));
+    }
+    if (matches.length === 0) return "";
+    return `Found ${matches.length} seed(s) matching #${tag}:\n\n` + matches.join("\n\n");
+  } catch { return ""; }
+}
+
+/** Write or append to a seed in the local vault. */
+function writeLocalVault(tag: string, content: string): void {
+  if (!RU_VAULT_ENABLED) return;
+  const filename = tag.replace(/\//g, "_") + ".md";
+  const filePath = nodePath.join(RU_VAULT_PATH, filename);
+  const ts = new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  if (fs.existsSync(filePath)) {
+    const existing = fs.readFileSync(filePath, "utf8");
+    fs.writeFileSync(filePath, existing + `\n\n---\n*${ts}*\n\n${content}`, "utf8");
+  } else {
+    fs.writeFileSync(filePath, `#${tag}\n\n${content}`, "utf8");
+  }
+}
+
+/** List all seed tags in the local vault. */
+function listLocalVaultTags(): string[] {
+  if (!RU_VAULT_ENABLED) return [];
+  try {
+    return fs.readdirSync(RU_VAULT_PATH)
+      .filter(f => f.endsWith(".md"))
+      .map(f => f.replace(/\.md$/, "").replace(/_/g, "/"));
+  } catch { return []; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 const OBSIDIAN_PORT = process.env.OBSIDIAN_PORT ?? "27123";
 const OBSIDIAN_PORT_NUM = parseInt(OBSIDIAN_PORT, 10);
@@ -77,12 +130,17 @@ const syncServer = http.createServer((req, res) => {
   }
 
   if (req.method === "GET" && req.url === "/tags") {
-    // Return all .md filenames from Obsidian vault (recursive) as tags
-    if (!OBSIDIAN_ENABLED) { res.writeHead(200).end(JSON.stringify({ tags: [] })); return; }
-    getAllVaultFiles().then(tags => {
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ tags }));
+    // Return tags from both the rū Desktop vault and Obsidian (if connected)
+    const localTags = listLocalVaultTags();
+    if (!OBSIDIAN_ENABLED) {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ tags: localTags }));
+      return;
+    }
+    getAllVaultFiles().then(obsidianTags => {
+      const merged = [...new Set([...localTags, ...obsidianTags])].sort();
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ tags: merged }));
     }).catch(() => {
-      res.writeHead(200).end(JSON.stringify({ tags: [] }));
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ tags: localTags }));
     });
     return;
   }
@@ -439,52 +497,74 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!args || typeof args.tag !== "string" || args.tag.trim() === "") {
       throw new Error('Missing or invalid argument: "tag" must be a non-empty string.');
     }
-    if (!OBSIDIAN_ENABLED) {
-      return {
-        content: [{ type: "text", text: `[rū] Obsidian is not connected. Run \`npx ru-mcp setup\` to link your vault.` }],
-      };
-    }
     const tag = args.tag.trim();
-    try {
-      const [context, keeperRules] = await Promise.all([
-        queryObsidianTag(tag),
-        fetchKeeperRules(tag),
-      ]);
+    const parts: string[] = [];
 
-      const parts: string[] = [];
-      if (keeperRules) parts.push(keeperRules);
-      if (context) parts.push(context);
-      else parts.push(`No results found for tag #${tag}.`);
+    // 1 — rū Desktop vault (always checked first)
+    const localResult = searchLocalVault(tag);
+    if (localResult) parts.push(localResult);
 
-      return { content: [{ type: "text", text: parts.join("\n\n") }] };
-    } catch (err) {
-      return {
-        content: [{ type: "text", text: `Error querying Obsidian: ${err instanceof Error ? err.message : String(err)}` }],
-        isError: true,
-      };
+    // 2 — Obsidian vault (if connected)
+    if (OBSIDIAN_ENABLED) {
+      try {
+        const [context, keeperRules] = await Promise.all([
+          queryObsidianTag(tag),
+          fetchKeeperRules(tag),
+        ]);
+        if (keeperRules) parts.push(keeperRules);
+        if (context) parts.push(context);
+      } catch (err) {
+        parts.push(`[rū] Obsidian query failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
+
+    if (parts.length === 0) {
+      const hint = !RU_VAULT_ENABLED && !OBSIDIAN_ENABLED
+        ? " Open the rū app or run `npx ru-mcp setup` to connect a vault."
+        : "";
+      return { content: [{ type: "text", text: `[rū] No seeds found for #${tag}.${hint}` }] };
+    }
+
+    return { content: [{ type: "text", text: parts.join("\n\n") }] };
   }
 
   if (request.params.name === "seed_context") {
     if (!args || typeof args.tag !== "string" || typeof args.content !== "string") {
       throw new Error('Missing arguments: "tag" and "content" are required.');
     }
-    if (!OBSIDIAN_ENABLED) {
-      return {
-        content: [{ type: "text", text: `[rū] Obsidian is not connected. Run \`npx ru-mcp setup\` to link your vault.` }],
-      };
-    }
     const tag = args.tag.trim();
     const content = args.content.trim();
-    try {
-      await appendToObsidianNote(tag, content);
-      return { content: [{ type: "text", text: `[rū] Saved to #${tag} in your Obsidian vault.` }] };
-    } catch (err) {
-      return {
-        content: [{ type: "text", text: `[rū] Failed to save to Obsidian: ${err instanceof Error ? err.message : String(err)}` }],
-        isError: true,
-      };
+    const saved: string[] = [];
+    const errors: string[] = [];
+
+    // Write to rū Desktop vault
+    if (RU_VAULT_ENABLED) {
+      try {
+        writeLocalVault(tag, content);
+        saved.push("rū Desktop");
+      } catch (err) {
+        errors.push(`rū Desktop: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
+
+    // Also write to Obsidian if connected
+    if (OBSIDIAN_ENABLED) {
+      try {
+        await appendToObsidianNote(tag, content);
+        saved.push("Obsidian");
+      } catch (err) {
+        errors.push(`Obsidian: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    if (saved.length === 0 && errors.length === 0) {
+      return { content: [{ type: "text", text: `[rū] No vault connected. Open the rū app or run \`npx ru-mcp setup\`.` }] };
+    }
+
+    const lines: string[] = [];
+    if (saved.length > 0) lines.push(`[rū] Saved #${tag} to ${saved.join(" + ")}.`);
+    if (errors.length > 0) lines.push(`Errors: ${errors.join("; ")}`);
+    return { content: [{ type: "text", text: lines.join("\n") }] };
   }
 
   throw new Error(`Unknown tool: ${request.params.name}`);
