@@ -1,5 +1,9 @@
 (() => {
-  const RU_PORT = 27125;
+  const RU_API = "https://ru-ivory.vercel.app";
+  let ruConfig = { key: "", namespace: "" };
+  chrome.storage.local.get(["ruMcpKey", "ruNamespace"], ({ ruMcpKey, ruNamespace }) => {
+    ruConfig = { key: ruMcpKey ?? "", namespace: ruNamespace ?? "" };
+  });
 
   const TYPES = [
     { id: "note",     color: "#d8b4fe", label: "Note" },
@@ -241,7 +245,11 @@
 
   async function fetchTags() {
     const [bridgeRes, { savedTags = [] }] = await Promise.all([
-      bridgeFetch(`http://localhost:${RU_PORT}/tags`).catch(() => null),
+      ruConfig.key
+        ? bridgeFetch(`${RU_API}/api/extension/tags`, {
+            headers: { "x-ru-key": ruConfig.key },
+          }).catch(() => null)
+        : Promise.resolve(null),
       chrome.storage.local.get("savedTags"),
     ]);
     const bridgeTags = bridgeRes?.ok ? (JSON.parse(bridgeRes.text).tags ?? []) : [];
@@ -465,14 +473,14 @@
       const content = `[${activeType.label}] ${savedText}${note ? `\n\n_${note}_` : ""}`;
 
       try {
-        const res = await bridgeFetch(`http://localhost:${RU_PORT}/seed`, {
+        if (!ruConfig.key) throw Object.assign(new Error("Open rū extension settings to connect"), { _nobridge: true });
+
+        const res = await bridgeFetch(`${RU_API}/api/mcp/seed`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tag, content, source_url: savedUrl }),
+          headers: { "Content-Type": "application/json", "x-ru-key": ruConfig.key },
+          body: JSON.stringify({ tag, content }),
         });
 
-        // res.error = background couldn't reach bridge (Claude Desktop not running)
-        // res.ok false = bridge reached but Obsidian returned an error
         if (res.error) throw Object.assign(new Error(res.error), { _nobridge: true });
         if (!res.ok) throw Object.assign(new Error(res.text), { _obsidian: true });
 
@@ -488,8 +496,8 @@
       } catch (err) {
         saveBtn.disabled = false;
         saveBtn.textContent = "Seed";
-        const msg = err._nobridge ? "Open Claude Desktop to save"
-                  : err._obsidian ? "Open Obsidian to save"
+        const msg = err._nobridge ? (err.message || "Click the rū icon to set up")
+                  : err._obsidian ? "Save failed — check your connection"
                   : "Error saving";
         showStatus(msg, "error");
         setTimeout(() => { const s = shadow?.querySelector(".status"); if (s) s.remove(); }, 2000);

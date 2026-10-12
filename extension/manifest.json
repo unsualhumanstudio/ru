@@ -1,12 +1,16 @@
 {
   "manifest_version": 3,
   "name": "rū",
-  "version": "0.1.0",
-  "description": "Highlight text on any page and tag it into your rū vault.",
+  "version": "0.2.0",
+  "description": "Highlight text on any page and tag it into your rū garden.",
   "permissions": ["activeTab", "scripting", "storage"],
-  "host_permissions": ["http://localhost:27125/*"],
+  "host_permissions": ["https://ru-ivory.vercel.app/*"],
   "background": {
     "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "rū settings"
   },
   "content_scripts": [
     {
