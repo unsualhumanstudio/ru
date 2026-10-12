@@ -1,62 +1,46 @@
 #!/usr/bin/env node
 import https from "node:https";
 import http from "node:http";
-import fs from "node:fs";
-import nodePath from "node:path";
-import os from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
-// ── rū Desktop vault (~/Library/Application Support/rū/) ─────────────────────
+// ── rū webapp API (primary seed store) ───────────────────────────────────────
 
-const RU_VAULT_PATH = nodePath.join(os.homedir(), "Library", "Application Support", "rū");
-const RU_VAULT_ENABLED = fs.existsSync(RU_VAULT_PATH);
+const RU_MCP_KEY = process.env.RU_MCP_KEY ?? "";
+const WEBAPP_ENABLED = RU_MCP_KEY.length > 0;
 
-/** Search local vault for seeds whose tag contains the query string. */
-function searchLocalVault(tag: string): string {
-  if (!RU_VAULT_ENABLED) return "";
+async function searchWebAppSeeds(tag: string): Promise<string> {
+  if (!WEBAPP_ENABLED) return "";
   try {
-    const files = fs.readdirSync(RU_VAULT_PATH).filter(f => f.endsWith(".md"));
-    const matches: string[] = [];
-    for (const file of files) {
-      const fileTag = file.replace(/\.md$/, "").replace(/_/g, "/");
-      if (!fileTag.toLowerCase().includes(tag.toLowerCase())) continue;
-      const content = fs.readFileSync(nodePath.join(RU_VAULT_PATH, file), "utf8");
-      const lines = content.split("\n");
-      const body = lines.slice(2).join("\n").trim(); // skip "#tag\n\n" header
-      if (body) matches.push([`[rū] #${fileTag}`, "─".repeat(40), body].join("\n"));
-    }
-    if (matches.length === 0) return "";
+    const url = `${RU_API_URL}/api/mcp/context?tag=${encodeURIComponent(tag)}`;
+    const res = await fetch(url, { headers: { "x-ru-key": RU_MCP_KEY } });
+    if (!res.ok) return "";
+    const data = await res.json() as { results: { path: string; content: string }[] };
+    if (!data.results || data.results.length === 0) return "";
+    const matches = data.results.map(d =>
+      [`[rū] #${d.path}`, "─".repeat(40), d.content.trim()].join("\n")
+    );
     return `Found ${matches.length} seed(s) matching #${tag}:\n\n` + matches.join("\n\n");
   } catch { return ""; }
 }
 
-/** Write or append to a seed in the local vault. */
-function writeLocalVault(tag: string, content: string): void {
-  if (!RU_VAULT_ENABLED) return;
-  const filename = tag.replace(/\//g, "_") + ".md";
-  const filePath = nodePath.join(RU_VAULT_PATH, filename);
-  const ts = new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  if (fs.existsSync(filePath)) {
-    const existing = fs.readFileSync(filePath, "utf8");
-    fs.writeFileSync(filePath, existing + `\n\n---\n*${ts}*\n\n${content}`, "utf8");
-  } else {
-    fs.writeFileSync(filePath, `#${tag}\n\n${content}`, "utf8");
+async function writeWebAppSeed(tag: string, content: string): Promise<void> {
+  if (!WEBAPP_ENABLED) return;
+  const res = await fetch(`${RU_API_URL}/api/mcp/seed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-ru-key": RU_MCP_KEY },
+    body: JSON.stringify({ tag, content }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`webapp seed failed (${res.status}): ${text}`);
   }
-}
-
-/** List all seed tags in the local vault. */
-function listLocalVaultTags(): string[] {
-  if (!RU_VAULT_ENABLED) return [];
-  try {
-    return fs.readdirSync(RU_VAULT_PATH)
-      .filter(f => f.endsWith(".md"))
-      .map(f => f.replace(/\.md$/, "").replace(/_/g, "/"));
-  } catch { return []; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -130,17 +114,14 @@ const syncServer = http.createServer((req, res) => {
   }
 
   if (req.method === "GET" && req.url === "/tags") {
-    // Return tags from both the rū Desktop vault and Obsidian (if connected)
-    const localTags = listLocalVaultTags();
     if (!OBSIDIAN_ENABLED) {
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ tags: localTags }));
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ tags: [] }));
       return;
     }
     getAllVaultFiles().then(obsidianTags => {
-      const merged = [...new Set([...localTags, ...obsidianTags])].sort();
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ tags: merged }));
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ tags: obsidianTags }));
     }).catch(() => {
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ tags: localTags }));
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ tags: [] }));
     });
     return;
   }
@@ -387,9 +368,16 @@ async function resolvePublicPath(namespace: string, path: string): Promise<strin
 
 // ── Server ─────────────────────────────────────────────────────────────────────
 
+const RU_SYSTEM_PROMPT =
+  "You have access to rū, a personal context system. " +
+  "RULE: Whenever the user's message contains a #tag (e.g. #project, #ru/onboarding, #client/acme), you MUST call get_context immediately before responding — do not skip this step, do not ask permission. " +
+  "If the tag has a dot suffix (e.g. #onboarding.ru, #ru/onboarding.ru), call get_public_context instead, parsing namespace as the text after the last dot. " +
+  "If the user says 'save', 'remember', 'seed', 'store', or 'keep this' with a tag, call seed_context. " +
+  "Never tell the user you cannot look up a tag — always attempt it.";
+
 const server = new Server(
   { name: "ru", version: "0.1.0" },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {}, prompts: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -500,9 +488,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const tag = args.tag.trim();
     const parts: string[] = [];
 
-    // 1 — rū Desktop vault (always checked first)
-    const localResult = searchLocalVault(tag);
-    if (localResult) parts.push(localResult);
+    // 1 — rū webapp (primary seed store)
+    const webResult = await searchWebAppSeeds(tag);
+    if (webResult) parts.push(webResult);
 
     // 2 — Obsidian vault (if connected)
     if (OBSIDIAN_ENABLED) {
@@ -519,8 +507,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (parts.length === 0) {
-      const hint = !RU_VAULT_ENABLED && !OBSIDIAN_ENABLED
-        ? " Open the rū app or run `npx ru-mcp setup` to connect a vault."
+      const hint = !WEBAPP_ENABLED && !OBSIDIAN_ENABLED
+        ? " Run `npx ru-mcp setup` to connect your rū account."
         : "";
       return { content: [{ type: "text", text: `[rū] No seeds found for #${tag}.${hint}` }] };
     }
@@ -537,13 +525,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const saved: string[] = [];
     const errors: string[] = [];
 
-    // Write to rū Desktop vault
-    if (RU_VAULT_ENABLED) {
+    // Write to rū webapp (primary)
+    if (WEBAPP_ENABLED) {
       try {
-        writeLocalVault(tag, content);
-        saved.push("rū Desktop");
+        await writeWebAppSeed(tag, content);
+        saved.push("rū");
       } catch (err) {
-        errors.push(`rū Desktop: ${err instanceof Error ? err.message : String(err)}`);
+        errors.push(`rū: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -558,7 +546,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (saved.length === 0 && errors.length === 0) {
-      return { content: [{ type: "text", text: `[rū] No vault connected. Open the rū app or run \`npx ru-mcp setup\`.` }] };
+      return { content: [{ type: "text", text: `[rū] Not connected. Run \`npx ru-mcp setup\` to connect your rū account.` }] };
     }
 
     const lines: string[] = [];
@@ -569,6 +557,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   throw new Error(`Unknown tool: ${request.params.name}`);
 });
+
+server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+  prompts: [{
+    name: "ru-instructions",
+    description: "rū context system instructions for Claude",
+  }],
+}));
+
+server.setRequestHandler(GetPromptRequestSchema, async () => ({
+  messages: [{
+    role: "user",
+    content: { type: "text", text: RU_SYSTEM_PROMPT },
+  }],
+}));
 
 async function main() {
   const transport = new StdioServerTransport();
