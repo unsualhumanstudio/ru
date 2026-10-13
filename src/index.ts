@@ -386,9 +386,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "get_context",
       description:
         "Automatically call this tool whenever the user's message contains a #tag with NO dot suffix (e.g. #project, #rū/onboarding, #tasks). " +
-        "Searches the local Obsidian vault for notes tagged with that tag and returns the context. " +
-        "Also returns any Keeper rules the user has defined for this tag — apply them when shaping your response. " +
-        "Do not wait to be asked — resolve the tag immediately.",
+        "Searches the user's rū garden for seeds tagged with that tag and returns the context. " +
+        "Seeds are prefixed with a category that tells you how to use them: " +
+        "[context] = background to silently absorb — shapes your response without being quoted; " +
+        "[idea] = something to engage with — build on it, critique it, explore it; " +
+        "[source] = material to draw from — quote, summarize, or reference it; " +
+        "[brief] = a directive — follow it as an instruction about how to respond. " +
+        "Apply each seed according to its category. Do not wait to be asked — resolve the tag immediately.",
       inputSchema: {
         type: "object",
         properties: {
