@@ -385,14 +385,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "get_context",
       description:
-        "Automatically call this tool whenever the user's message contains a #tag with NO dot suffix (e.g. #project, #rū/onboarding, #tasks). " +
-        "Searches the user's rū garden for seeds tagged with that tag and returns the context. " +
+        "PRIORITY RULE: When the user's message contains a #tag with NO dot suffix (e.g. #project, #client/acme, #dinnerparty/chapter2), call THIS tool FIRST — before searching Notion, Google Drive, or any other source. " +
+        "A #tag in rū syntax is always a personal context reference, never a search query for other tools. " +
+        "Searches the user's rū garden for seeds tagged with that path and returns the context. " +
         "Seeds are prefixed with a category that tells you how to use them: " +
         "[context] = background to silently absorb — shapes your response without being quoted; " +
         "[idea] = something to engage with — build on it, critique it, explore it; " +
         "[source] = material to draw from — quote, summarize, or reference it; " +
         "[brief] = a directive — follow it as an instruction about how to respond. " +
-        "Apply each seed according to its category. Do not wait to be asked — resolve the tag immediately.",
+        "Apply each seed according to its category. Do not wait to be asked — resolve the tag immediately, then answer the user's question using what you found.",
       inputSchema: {
         type: "object",
         properties: {
