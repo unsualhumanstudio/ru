@@ -1,6 +1,6 @@
 {
   "name": "ru-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "rū — a protocol for seeding and resolving context with AI agents via #tags",
   "type": "module",
   "main": "dist/index.js",
